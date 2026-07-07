@@ -1,0 +1,15 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+# Scheduled (cron) function: runs every minute, incrementally scans
+# volume history for a batch of coins and refreshes the market snapshot.
+# Netlify cron syntax is standard 5-field cron (UTC).
+[functions."scan-market"]
+  schedule = "* * * * *"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
