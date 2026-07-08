@@ -10,8 +10,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const TRACK_COUNT = 150;
-const REQUEST_SPACING_MS = 1200; // pacing between per-coin requests to respect CoinGecko's free rate limit
+const TRACK_COUNT = 100;
+const REQUEST_SPACING_MS = 2000; // pacing between per-coin requests to respect CoinGecko's free rate limit
 const PER_COIN_TIMEOUT_MS = 8000;
 
 const MARKETS_URL = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${TRACK_COUNT}&page=1&price_change_percentage=1h,24h`;
