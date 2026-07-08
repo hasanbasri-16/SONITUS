@@ -2,9 +2,17 @@ name: Scan Market Data
 
 on:
   schedule:
-    # GitHub cron is UTC. Every 5 minutes.
-    - cron: '*/5 * * * *'
+    # GitHub cron is UTC. Every 15 minutes — a full scan takes several minutes
+    # (rate-limit backoffs included), so 5-minute scheduling caused GitHub to
+    # heavily delay/skip runs. 15 minutes gives comfortable headroom.
+    - cron: '*/15 * * * *'
   workflow_dispatch: {} # lets you trigger it manually from the Actions tab, useful for testing
+
+# Prevents two scans from running at the same time (which could otherwise
+# cause a race condition when pushing to the "data" branch).
+concurrency:
+  group: scan-market
+  cancel-in-progress: false
 
 permissions:
   contents: write # needed to push the updated data file to the "data" branch
