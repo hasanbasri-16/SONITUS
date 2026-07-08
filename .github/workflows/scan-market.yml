@@ -1,0 +1,47 @@
+name: Scan Market Data
+
+on:
+  schedule:
+    # GitHub cron is UTC. Every 5 minutes.
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {} # lets you trigger it manually from the Actions tab, useful for testing
+
+permissions:
+  contents: write # needed to push the updated data file to the "data" branch
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main (has the script)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          path: main-checkout
+
+      - name: Checkout data branch (where results are published)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: data
+          path: data-checkout
+          # NOTE: the "data" branch must exist before the first run.
+          # See README.md for the one-time setup command.
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run market scan
+        working-directory: main-checkout
+        run: node scripts/scan-market.js ../data-checkout/data/dashboard-data.json
+
+      - name: Commit and push updated data
+        working-directory: data-checkout
+        run: |
+          git config user.name "sonitus-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/dashboard-data.json
+          git diff --quiet --cached || git commit -m "chore: refresh market data [skip ci]"
+          git push
