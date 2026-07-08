@@ -105,7 +105,7 @@ exports.handler = async () => {
       if(existing && existing.map) volumeMap = existing.map;
     } catch(e) { /* first run, empty map */ }
 
-    const ids = coins.slice(0, TRACK_COUNT).map(c => c.id);
+    const ids = coins.slice(0, TRACK_COUNT).map(c => c.id).sort(); // alphabetical: stable across runs, avoids cursor drift when market-cap ranking reshuffles
     const batchIds = [];
     for(let i = 0; i < BATCH_SIZE && ids.length > 0; i++){
       batchIds.push(ids[(cursor + i) % ids.length]);
