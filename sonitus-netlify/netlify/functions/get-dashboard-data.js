@@ -8,8 +8,19 @@
 
 const { getStore } = require('@netlify/blobs');
 
+function getMarketStore(){
+  if (process.env.BLOBS_SITE_ID && process.env.BLOBS_TOKEN) {
+    return getStore({
+      name: 'sonitus-market',
+      siteID: process.env.BLOBS_SITE_ID,
+      token: process.env.BLOBS_TOKEN
+    });
+  }
+  return getStore('sonitus-market');
+}
+
 exports.handler = async () => {
-  const store = getStore('sonitus-market');
+  const store = getMarketStore();
 
   try {
     const [marketSnapshot, volumeHistory, categoriesSnapshot] = await Promise.all([
