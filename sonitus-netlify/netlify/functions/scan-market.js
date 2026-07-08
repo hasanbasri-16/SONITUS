@@ -15,6 +15,20 @@
 
 const { getStore } = require('@netlify/blobs');
 
+// Netlify's automatic Blobs environment injection didn't work for this project
+// (likely due to earlier base-directory config), so we fall back to explicit
+// credentials via environment variables when available.
+function getMarketStore(){
+  if (process.env.BLOBS_SITE_ID && process.env.BLOBS_TOKEN) {
+    return getStore({
+      name: 'sonitus-market',
+      siteID: process.env.BLOBS_SITE_ID,
+      token: process.env.BLOBS_TOKEN
+    });
+  }
+  return getStore('sonitus-market');
+}
+
 const TRACK_COUNT = 150;      // how many top-mcap coins we keep real volume history for
 const BATCH_SIZE = 12;        // coins processed per cron run (stays within function timeout)
 const PER_COIN_TIMEOUT_MS = 6000;
@@ -48,7 +62,7 @@ async function fetchVolumeChangeForCoin(id){
 }
 
 exports.handler = async () => {
-  const store = getStore('sonitus-market');
+  const store = getMarketStore();
   const log = [];
 
   try {
