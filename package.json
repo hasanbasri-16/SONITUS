@@ -1,9 +1,0 @@
-{
-  "name": "sonitus-crypto-dashboard",
-  "version": "1.0.0",
-  "private": true,
-  "description": "SONITUS crypto screener - static site on Netlify, data pipeline on GitHub Actions",
-  "engines": {
-    "node": ">=18"
-  }
-}
