@@ -250,8 +250,24 @@ let volumeChangeMap = {}; // id -> pct (number) | null, sourced from our backend
 // every 5 minutes and pushes the result to the "data" branch of this repo;
 // we read it directly from GitHub's raw content CDN, which is
 // free and CORS-enabled for public repos.
-const DATA_URL_BASE = 'https://raw.githubusercontent.com/hasanbasri-16/SONITUS/data/data/dashboard-data.json';
-function dataUrl(){ return DATA_URL_BASE + '?_=' + Date.now(); } // cache-bust GitHub's CDN each call
+// raw.githubusercontent.com caches at the CDN edge and ignores our cache-busting
+// query param, so we read the file through GitHub's REST Contents API instead —
+// it returns the file's live content (base64-encoded) with no meaningful caching
+// delay. Unauthenticated rate limit is 60 req/hour per client IP, so we poll
+// every 2 minutes (well under that) — plenty since the underlying data only
+// changes every ~15 minutes anyway.
+const DATA_API_URL = 'https://api.github.com/repos/hasanbasri-16/SONITUS/contents/data/dashboard-data.json?ref=data';
+
+async function fetchDashboardData(){
+  const res = await fetch(DATA_API_URL, { headers: { 'Accept': 'application/vnd.github.v3+json' } });
+  if(!res.ok) throw new Error('GitHub API hatası: HTTP ' + res.status);
+  const meta = await res.json();
+  const decoded = atob(meta.content.replace(/\n/g, ''));
+  // decode UTF-8 correctly (atob gives a binary string, not proper UTF-8)
+  const bytes = Uint8Array.from(decoded, c => c.charCodeAt(0));
+  const jsonText = new TextDecoder('utf-8').decode(bytes);
+  return JSON.parse(jsonText);
+}
 
 function fmtCompact(n){
   if(n === null || n === undefined) return '—';
@@ -368,8 +384,7 @@ async function loadDashboard(){
   const errorBox = document.getElementById('error-box');
   errorBox.style.display = 'none';
   try{
-    const res = await fetch(dataUrl());
-    const data = await res.json();
+    const data = await fetchDashboardData();
     if(!data.ok) throw new Error(data.error || 'Bilinmeyen hata');
 
     allCoins = data.coins || [];
@@ -412,7 +427,7 @@ document.getElementById('mcap-filter').addEventListener('change', (e)=>{
 document.getElementById('search-input').addEventListener('input', render);
 
 loadDashboard();
-setInterval(loadDashboard, 60000); // data itself only changes every ~5min (GitHub Actions cron); this just re-reads the CDN, cheap either way
+setInterval(loadDashboard, 120000); // GitHub API unauthenticated rate limit is 60/hour per IP; every 2min = 30/hour, safe margin. Underlying data only refreshes ~every 15min anyway.
 </script>
 
 </body>
