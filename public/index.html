@@ -172,7 +172,7 @@
       <div class="panel" style="grid-column: span 2;">
         <div class="panel-head">
           <div class="panel-title"><span class="dot"></span>YÜKSEK VOL/MCAP VARLIKLAR</div>
-          <div class="panel-desc">Piyasa değeri filtreli, Hacim/Piyasa Değeri oranı en yüksek varlıklar</div>
+          <div class="panel-desc">Piyasa değeri filtreli, Hacim/Piyasa Değeri oranı en yüksek varlıklar (stabil coinler hariç)</div>
           <div class="panel-updated" id="upd-1">güncellendi: az önce</div>
         </div>
         <div class="scroll-body">
@@ -203,7 +203,7 @@
       <div class="panel" style="grid-column: span 2;">
         <div class="panel-head">
           <div class="panel-title alert-title"><span class="dot"></span>HACİMDE EN ÇOK DÜŞENLER</div>
-          <div class="panel-desc">Gerçek 24s hacim değişimine göre en sert düşen varlıklar (bkz. dipnot)</div>
+          <div class="panel-desc">Gerçek 24s hacim değişimine göre en sert düşen varlıklar (stabil coinler hariç, bkz. dipnot)</div>
           <div class="panel-updated" id="upd-3">güncellendi: az önce</div>
         </div>
         <div class="scroll-body">
@@ -325,9 +325,18 @@ function rowHtml(c, volDelta){
   </tr>`;
 }
 
+// Common stablecoin symbols — excluded from all panels since their ~0% price
+// moves and huge volume just add noise to a screener meant for spotting signals.
+const STABLECOIN_SYMBOLS = new Set([
+  'usdt','usdc','usd1','dai','tusd','fdusd','usdd','usdp','gusd','lusd','usde',
+  'pyusd','rlusd','usdg','eurs','eurt','susd','frax','crvusd','busd','usdk',
+  'alusd','mim','ustc','dola','usdx','xusd','cusd','usdy','usr','usda','usdb'
+]);
+
 function render(){
   const query = document.getElementById('search-input').value.trim().toLowerCase();
   let coins = allCoins.filter(c => c.market_cap && c.market_cap >= mcapMin);
+  coins = coins.filter(c => !STABLECOIN_SYMBOLS.has(c.symbol.toLowerCase()));
   if(query){
     coins = coins.filter(c => c.name.toLowerCase().includes(query) || c.symbol.toLowerCase().includes(query));
   }
