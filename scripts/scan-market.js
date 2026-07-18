@@ -28,7 +28,7 @@ const MARKETS_URL = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=
 const CATEGORIES_URL = 'https://api.coingecko.com/api/v3/coins/categories?order=market_cap_change_24h_desc';
 const BYBIT_TICKERS_URL = 'https://api.bybit.com/v5/market/tickers?category=linear';
 const BYBIT_KLINES_URL = (symbol) =>
-  `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=60&limit=25`;
+  `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=60&limit=50`;
 
 const outputPath = process.argv[2];
 if (!outputPath) {
@@ -46,7 +46,10 @@ function fetchWithTimeout(url, ms) {
 
 // Bybit kline row: [startTime, open, high, low, close, volume, turnover]
 // turnover (index 6) is the quote-asset (USDT) notional volume for that hour.
-// Bybit returns newest-first, so we sort by startTime ascending to be safe.
+// We compare the SUM of the most recent 24 hourly candles against the SUM of
+// the 24 hours before that — a proper rolling 24h volume comparison. Comparing
+// two single hours (what we did before) is noisy: if the "24h ago" hour
+// happened to have near-zero volume, the resulting % swings to absurd values.
 async function fetchFuturesVolumeChange(symbol) {
   const res = await fetchWithTimeout(BYBIT_KLINES_URL(symbol), REQUEST_TIMEOUT_MS);
   if (res.status === 429) throw new Error('RATE_LIMIT');
@@ -54,11 +57,15 @@ async function fetchFuturesVolumeChange(symbol) {
   const data = await res.json();
   if (data.retCode !== 0 || !data.result || !Array.isArray(data.result.list)) return null;
   const rows = [...data.result.list].sort((a, b) => Number(a[0]) - Number(b[0]));
-  if (rows.length < 2) return null;
-  const nowVol = parseFloat(rows[rows.length - 1][6]);
-  const pastVol = parseFloat(rows[0][6]);
-  if (!pastVol || isNaN(pastVol) || isNaN(nowVol)) return null;
-  return ((nowVol - pastVol) / pastVol) * 100;
+  if (rows.length < 48) return null; // need two full 24h windows
+  const turnovers = rows.map(r => parseFloat(r[6])).filter(v => !isNaN(v));
+  const last48 = turnovers.slice(-48);
+  const previous24 = last48.slice(0, 24);
+  const recent24 = last48.slice(24, 48);
+  const prevSum = previous24.reduce((a, b) => a + b, 0);
+  const recentSum = recent24.reduce((a, b) => a + b, 0);
+  if (!prevSum || prevSum <= 0) return null;
+  return ((recentSum - prevSum) / prevSum) * 100;
 }
 
 function loadExisting(outputPath) {
