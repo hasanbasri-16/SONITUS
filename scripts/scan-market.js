@@ -41,7 +41,15 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function fetchWithTimeout(url, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
-  return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
+  return fetch(url, {
+    signal: controller.signal,
+    headers: {
+      // Some exchanges' WAFs (Cloudflare etc.) block requests that look like
+      // default server/bot traffic. A normal browser User-Agent avoids that.
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'application/json'
+    }
+  }).finally(() => clearTimeout(timer));
 }
 
 // Bybit kline row: [startTime, open, high, low, close, volume, turnover]
