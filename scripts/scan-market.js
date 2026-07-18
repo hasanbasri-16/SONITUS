@@ -1,26 +1,34 @@
 // scripts/scan-market.js
 //
-// Runs inside a GitHub Actions scheduled workflow (every 5 minutes).
-// Unlike a serverless function, a GitHub Actions job has a generous time
-// budget, so we scan ALL tracked coins' volume history in a single run
-// (no cursor/batching needed) — much simpler than the old Netlify version.
+// Runs inside a GitHub Actions scheduled workflow (every ~15 minutes).
+//
+// Data sources, kept deliberately separate so nothing gets mixed:
+//   - CoinGecko  -> price, market cap, 1h/24h PRICE change (spot-market based,
+//                   but we don't use CoinGecko for any volume metric anymore)
+//   - Binance    -> ALL volume metrics (Vol/MCap ratio AND 24h volume change),
+//                   sourced entirely from USDT-M perpetual futures. Coins with
+//                   no Binance futures market simply don't get a volume metric
+//                   and are excluded from the volume-based panels — better than
+//                   silently falling back to spot volume and mixing two
+//                   incomparable numbers in the same ranking.
+//
+// Binance's rate limits are far more generous than CoinGecko's free tier, so
+// this run finishes much faster than the old CoinGecko-per-coin version did.
 //
 // Usage: node scripts/scan-market.js <output-file-path>
 
 const fs = require('fs');
 const path = require('path');
 
-const TRACK_COUNT = 100;
-const REQUEST_SPACING_MS = 2000; // pacing between per-coin requests to respect CoinGecko's free rate limit
-const PER_COIN_TIMEOUT_MS = 8000;
+const TRACK_COUNT = 250; // CoinGecko per_page max in a single call — cheap, one request
+const KLINES_SPACING_MS = 150; // pacing between Binance klines calls (Binance is generous, this is just politeness)
+const REQUEST_TIMEOUT_MS = 8000;
 
 const MARKETS_URL = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${TRACK_COUNT}&page=1&price_change_percentage=1h,24h`;
 const CATEGORIES_URL = 'https://api.coingecko.com/api/v3/coins/categories?order=market_cap_change_24h_desc';
-// Binance Futures 24hr ticker — ONE bulk call returns every USDT-M perpetual's
-// 24h quote volume at once (no per-coin rate limit issue at all). Futures volume
-// is what most screeners actually mean by "Vol/MCap" (much bigger, more liquid
-// numbers than CoinGecko's spot-only volume), so we use it for that ratio.
-const BINANCE_FUTURES_URL = 'https://fapi.binance.com/fapi/v1/ticker/24hr';
+const BINANCE_FUTURES_TICKER_URL = 'https://fapi.binance.com/fapi/v1/ticker/24hr';
+const BINANCE_FUTURES_KLINES_URL = (symbol) =>
+  `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=25`;
 
 const outputPath = process.argv[2];
 if (!outputPath) {
@@ -36,30 +44,25 @@ function fetchWithTimeout(url, ms) {
   return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
-async function fetchVolumeChangeForCoin(id) {
-  const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=2`;
-  const res = await fetchWithTimeout(url, PER_COIN_TIMEOUT_MS);
-  if (res.status === 429) throw new Error('RATE_LIMIT');
+// Klines format: [openTime, open, high, low, close, volume, closeTime, quoteVolume, ...]
+// quoteVolume (index 7) is the USD-ish notional volume for that hour — summing/comparing
+// these gives us a real "now vs ~24h ago" volume change, same idea as before but Binance-sourced.
+async function fetchFuturesVolumeChange(symbol) {
+  const res = await fetchWithTimeout(BINANCE_FUTURES_KLINES_URL(symbol), REQUEST_TIMEOUT_MS);
+  if (res.status === 429 || res.status === 418) throw new Error('RATE_LIMIT');
   if (!res.ok) throw new Error('HTTP_' + res.status);
-  const data = await res.json();
-  const vols = data.total_volumes;
-  if (!vols || vols.length < 2) return null;
-  const now = vols[vols.length - 1];
-  const targetTs = Date.now() - 24 * 3600 * 1000;
-  let closest = vols[0], minDiff = Infinity;
-  for (const point of vols) {
-    const diff = Math.abs(point[0] - targetTs);
-    if (diff < minDiff) { minDiff = diff; closest = point; }
-  }
-  if (!closest || !closest[1]) return null;
-  return ((now[1] - closest[1]) / closest[1]) * 100;
+  const klines = await res.json();
+  if (!Array.isArray(klines) || klines.length < 2) return null;
+  // Compare the most recent hour's volume to the hour ~24h ago (first entry in a 25h window)
+  const nowVol = parseFloat(klines[klines.length - 1][7]);
+  const pastVol = parseFloat(klines[0][7]);
+  if (!pastVol || isNaN(pastVol) || isNaN(nowVol)) return null;
+  return ((nowVol - pastVol) / pastVol) * 100;
 }
 
-// Load whatever was written last time, so if a coin fails this run we keep its previous value
 function loadExisting(outputPath) {
   try {
-    const raw = fs.readFileSync(outputPath, 'utf8');
-    return JSON.parse(raw);
+    return JSON.parse(fs.readFileSync(outputPath, 'utf8'));
   } catch (e) {
     return null;
   }
@@ -69,40 +72,11 @@ async function main() {
   const existing = loadExisting(outputPath);
   const volumeMap = (existing && existing.volumeHistory) || {};
 
-  console.log('Fetching market snapshot...');
+  console.log('Fetching CoinGecko market snapshot (price/mcap only)...');
   const marketsRes = await fetchWithTimeout(MARKETS_URL, 10000);
   if (!marketsRes.ok) throw new Error('markets fetch failed: HTTP ' + marketsRes.status);
   const coins = await marketsRes.json();
   console.log(`Got ${coins.length} coins.`);
-
-  console.log('Fetching Binance Futures 24h volume...');
-  try {
-    const futRes = await fetchWithTimeout(BINANCE_FUTURES_URL, 10000);
-    if (futRes.ok) {
-      const tickers = await futRes.json();
-      // Build symbol -> quoteVolume map, e.g. "ONDOUSDT" -> 123456789.12
-      const futuresMap = {};
-      for (const t of tickers) {
-        if (t.symbol && t.symbol.endsWith('USDT')) {
-          const base = t.symbol.slice(0, -4).toLowerCase();
-          futuresMap[base] = parseFloat(t.quoteVolume);
-        }
-      }
-      let matched = 0;
-      for (const c of coins) {
-        const fv = futuresMap[c.symbol.toLowerCase()];
-        if (fv && !isNaN(fv)) {
-          c.futures_volume_24h = fv;
-          matched++;
-        }
-      }
-      console.log(`Matched Binance Futures volume for ${matched}/${coins.length} coins.`);
-    } else {
-      console.warn('Binance Futures fetch failed: HTTP', futRes.status);
-    }
-  } catch (e) {
-    console.warn('Binance Futures fetch failed, continuing without it:', e.message);
-  }
 
   console.log('Fetching categories...');
   let categories = (existing && existing.categories) || [];
@@ -116,27 +90,55 @@ async function main() {
     console.warn('Categories fetch failed, keeping previous data:', e.message);
   }
 
-  console.log('Scanning volume history for tracked coins...');
-  const ids = coins.slice(0, TRACK_COUNT).map(c => c.id);
+  console.log('Fetching Binance Futures 24h ticker (bulk)...');
+  const futuresSymbols = {}; // base symbol (lowercase) -> Binance futures symbol, e.g. "ondo" -> "ONDOUSDT"
+  try {
+    const futRes = await fetchWithTimeout(BINANCE_FUTURES_TICKER_URL, 10000);
+    if (futRes.ok) {
+      const tickers = await futRes.json();
+      for (const t of tickers) {
+        if (t.symbol && t.symbol.endsWith('USDT')) {
+          const base = t.symbol.slice(0, -4).toLowerCase();
+          futuresSymbols[base] = t.symbol;
+          const c = coins.find(c => c.symbol.toLowerCase() === base);
+          if (c) c.futures_volume_24h = parseFloat(t.quoteVolume);
+        }
+      }
+    } else {
+      console.warn('Binance Futures ticker fetch failed: HTTP', futRes.status);
+    }
+  } catch (e) {
+    console.warn('Binance Futures ticker fetch failed:', e.message);
+  }
+
+  const matchedCoins = coins.filter(c => c.futures_volume_24h);
+  console.log(`${matchedCoins.length}/${coins.length} coins have a Binance Futures market.`);
+
+  console.log('Scanning Binance Futures volume history for matched coins...');
   let ok = 0, failed = 0;
-  for (const id of ids) {
+  for (const c of matchedCoins) {
+    const symbol = futuresSymbols[c.symbol.toLowerCase()];
     try {
-      const pct = await fetchVolumeChangeForCoin(id);
-      volumeMap[id] = { pct, updatedAt: new Date().toISOString() };
+      const pct = await fetchFuturesVolumeChange(symbol);
+      volumeMap[c.id] = { pct, updatedAt: new Date().toISOString() };
       ok++;
     } catch (e) {
       failed++;
       if (e.message === 'RATE_LIMIT') {
-        console.warn(`Rate limited on ${id}, backing off 10s...`);
-        await sleep(10000);
+        console.warn(`Rate limited on ${symbol}, backing off 5s...`);
+        await sleep(5000);
       } else {
-        console.warn(`Failed on ${id}: ${e.message}`);
+        console.warn(`Failed on ${symbol}: ${e.message}`);
       }
       // keep previous value for this coin if any
     }
-    await sleep(REQUEST_SPACING_MS);
+    await sleep(KLINES_SPACING_MS);
   }
   console.log(`Volume scan done: ${ok} ok, ${failed} failed.`);
+
+  // Coins with no futures market get no volume entry at all — the frontend
+  // treats "missing from volumeHistory" as "excluded from volume panels",
+  // which is exactly what we want instead of a misleading spot fallback.
 
   const payload = {
     ok: true,
