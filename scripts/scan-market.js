@@ -16,6 +16,11 @@ const PER_COIN_TIMEOUT_MS = 8000;
 
 const MARKETS_URL = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${TRACK_COUNT}&page=1&price_change_percentage=1h,24h`;
 const CATEGORIES_URL = 'https://api.coingecko.com/api/v3/coins/categories?order=market_cap_change_24h_desc';
+// Binance Futures 24hr ticker — ONE bulk call returns every USDT-M perpetual's
+// 24h quote volume at once (no per-coin rate limit issue at all). Futures volume
+// is what most screeners actually mean by "Vol/MCap" (much bigger, more liquid
+// numbers than CoinGecko's spot-only volume), so we use it for that ratio.
+const BINANCE_FUTURES_URL = 'https://fapi.binance.com/fapi/v1/ticker/24hr';
 
 const outputPath = process.argv[2];
 if (!outputPath) {
@@ -69,6 +74,35 @@ async function main() {
   if (!marketsRes.ok) throw new Error('markets fetch failed: HTTP ' + marketsRes.status);
   const coins = await marketsRes.json();
   console.log(`Got ${coins.length} coins.`);
+
+  console.log('Fetching Binance Futures 24h volume...');
+  try {
+    const futRes = await fetchWithTimeout(BINANCE_FUTURES_URL, 10000);
+    if (futRes.ok) {
+      const tickers = await futRes.json();
+      // Build symbol -> quoteVolume map, e.g. "ONDOUSDT" -> 123456789.12
+      const futuresMap = {};
+      for (const t of tickers) {
+        if (t.symbol && t.symbol.endsWith('USDT')) {
+          const base = t.symbol.slice(0, -4).toLowerCase();
+          futuresMap[base] = parseFloat(t.quoteVolume);
+        }
+      }
+      let matched = 0;
+      for (const c of coins) {
+        const fv = futuresMap[c.symbol.toLowerCase()];
+        if (fv && !isNaN(fv)) {
+          c.futures_volume_24h = fv;
+          matched++;
+        }
+      }
+      console.log(`Matched Binance Futures volume for ${matched}/${coins.length} coins.`);
+    } else {
+      console.warn('Binance Futures fetch failed: HTTP', futRes.status);
+    }
+  } catch (e) {
+    console.warn('Binance Futures fetch failed, continuing without it:', e.message);
+  }
 
   console.log('Fetching categories...');
   let categories = (existing && existing.categories) || [];
