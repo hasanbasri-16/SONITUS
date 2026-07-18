@@ -172,7 +172,7 @@
       <div class="panel" style="grid-column: span 2;">
         <div class="panel-head">
           <div class="panel-title"><span class="dot"></span>YÜKSELEN HACİMDE VOL/MCAP YÜKSEK VARLIKLAR</div>
-          <div class="panel-desc">Hacmi yükselen varlıklar arasından Vol/Mcap oranı en yüksek olanlar (stabil coinler hariç)</div>
+          <div class="panel-desc">Binance Futures hacmi yükselen varlıklar arasından Vol/Mcap oranı en yüksek olanlar (stabil coinler ve futures'ı olmayanlar hariç)</div>
           <div class="panel-updated" id="upd-1">güncellendi: az önce</div>
         </div>
         <div class="scroll-body">
@@ -203,7 +203,7 @@
       <div class="panel" style="grid-column: span 2;">
         <div class="panel-head">
           <div class="panel-title alert-title"><span class="dot"></span>HACİMDE EN ÇOK DÜŞENLER</div>
-          <div class="panel-desc">Gerçek 24s hacim değişimine göre en sert düşen varlıklar (stabil coinler hariç, bkz. dipnot)</div>
+          <div class="panel-desc">Binance Futures'ta 24s hacmi en sert düşen varlıklar (stabil coinler ve futures'ı olmayanlar hariç, bkz. dipnot)</div>
           <div class="panel-updated" id="upd-3">güncellendi: az önce</div>
         </div>
         <div class="scroll-body">
@@ -236,8 +236,8 @@
 </main>
 
 <footer>
-  * Hacim Δ: gerçek 24 saatlik hacim değişimi. Bu veri, GitHub Actions üzerinde her ~15 dakikada bir çalışan ücretsiz bir cron görevi tarafından hesaplanıp bu reponun "data" branch'ine yazılıyor — sen sadece hazır sonucu okuyorsun, tarayıcın hiçbir hesaplama yapmıyor. Her tur ~100 coin'i tarıyor, bu yüzden veriler birkaç dakika gecikmeli olabilir.<br>
-  Vol/Mcap oranı: mümkün olan coinlerde Binance Futures 24s hacmi kullanılıyor (yoksa CoinGecko spot hacmine düşülüyor) — bu yüzden rakamlar Binance verisine dayalı diğer tarayıcılara yakın çıkar. "Yükselen Hacimde" ve "Hacimde En Çok Düşenler" panelleri birbirini dışlar: bir coin ikisinde birden görünmez.<br>
+  * Hacim ile ilgili tüm veriler (Vol/Mcap oranı ve Hacim Δ) Binance Futures'tan (USDT-M perpetual) geliyor — spot veriyle karıştırılmıyor, bu yüzden tablodaki tüm satırlar birbiriyle tutarlı şekilde karşılaştırılabilir. Binance'te futures piyasası olmayan coinler bu iki panelde hiç görünmez (yanıltıcı bir spot fallback göstermek yerine). "Yükselen Hacimde" ve "Hacimde En Çok Düşenler" panelleri birbirini dışlar: bir coin ikisinde birden görünmez. Fiyat/piyasa değeri verisi hâlâ CoinGecko'dan.<br>
+  Bu veri, GitHub Actions üzerinde her ~15 dakikada bir çalışan ücretsiz bir cron görevi tarafından hesaplanıp bu reponun "data" branch'ine yazılıyor — sen sadece hazır sonucu okuyorsun.<br>
   Veri kaynağı: CoinGecko (prototip) → CoinMarketCap (key eklenince) · Yatırım tavsiyesi değildir.
 </footer>
 
@@ -301,12 +301,12 @@ function symCell(c){
   return `<span class="sym-cell"><img src="${c.image}" alt=""><span>${c.symbol.toUpperCase()}</span></span>`;
 }
 
-// Prefer Binance Futures 24h volume (much closer to what most screeners mean
-// by "Vol/MCap" — big, liquid derivatives turnover) and fall back to
-// CoinGecko's spot volume for coins with no futures market.
+// Volume metrics are Binance-Futures-only now (see scan-market.js) — no spot
+// fallback, so every number in these panels comes from the same source and is
+// genuinely comparable. Coins with no Binance futures market simply won't
+// have this value and are excluded from the volume-based panels.
 function getVolumeForRatio(c){
-  if(c.futures_volume_24h && c.futures_volume_24h > 0) return c.futures_volume_24h;
-  return c.total_volume || null;
+  return (c.futures_volume_24h && c.futures_volume_24h > 0) ? c.futures_volume_24h : null;
 }
 
 function rowHtml(c, volDelta){
@@ -376,6 +376,7 @@ function render(){
 
   // Panel 3: FALLING volume only (mutually exclusive with panel 1)
   const byFallingVolume = [...coins]
+    .filter(c => getVolumeForRatio(c) && c.market_cap)
     .filter(c => typeof volDeltas[c.id] === 'number' && volDeltas[c.id] < 0)
     .sort((a,b)=> volDeltas[a.id] - volDeltas[b.id])
     .slice(0,15);
