@@ -171,8 +171,8 @@
 
       <div class="panel" style="grid-column: span 2;">
         <div class="panel-head">
-          <div class="panel-title"><span class="dot"></span>YÜKSEK VOL/MCAP VARLIKLAR</div>
-          <div class="panel-desc">Piyasa değeri filtreli, Hacim/Piyasa Değeri oranı en yüksek varlıklar (stabil coinler hariç)</div>
+          <div class="panel-title"><span class="dot"></span>YÜKSELEN HACİMDE VOL/MCAP YÜKSEK VARLIKLAR</div>
+          <div class="panel-desc">Hacmi yükselen varlıklar arasından Vol/Mcap oranı en yüksek olanlar (stabil coinler hariç)</div>
           <div class="panel-updated" id="upd-1">güncellendi: az önce</div>
         </div>
         <div class="scroll-body">
@@ -237,6 +237,7 @@
 
 <footer>
   * Hacim Δ: gerçek 24 saatlik hacim değişimi. Bu veri, GitHub Actions üzerinde her ~15 dakikada bir çalışan ücretsiz bir cron görevi tarafından hesaplanıp bu reponun "data" branch'ine yazılıyor — sen sadece hazır sonucu okuyorsun, tarayıcın hiçbir hesaplama yapmıyor. Her tur ~100 coin'i tarıyor, bu yüzden veriler birkaç dakika gecikmeli olabilir.<br>
+  Vol/Mcap oranı: mümkün olan coinlerde Binance Futures 24s hacmi kullanılıyor (yoksa CoinGecko spot hacmine düşülüyor) — bu yüzden rakamlar Binance verisine dayalı diğer tarayıcılara yakın çıkar. "Yükselen Hacimde" ve "Hacimde En Çok Düşenler" panelleri birbirini dışlar: bir coin ikisinde birden görünmez.<br>
   Veri kaynağı: CoinGecko (prototip) → CoinMarketCap (key eklenince) · Yatırım tavsiyesi değildir.
 </footer>
 
@@ -300,10 +301,19 @@ function symCell(c){
   return `<span class="sym-cell"><img src="${c.image}" alt=""><span>${c.symbol.toUpperCase()}</span></span>`;
 }
 
+// Prefer Binance Futures 24h volume (much closer to what most screeners mean
+// by "Vol/MCap" — big, liquid derivatives turnover) and fall back to
+// CoinGecko's spot volume for coins with no futures market.
+function getVolumeForRatio(c){
+  if(c.futures_volume_24h && c.futures_volume_24h > 0) return c.futures_volume_24h;
+  return c.total_volume || null;
+}
+
 function rowHtml(c, volDelta){
   const chg1h = c.price_change_percentage_1h_in_currency;
   const chg24h = c.price_change_percentage_24h_in_currency ?? c.price_change_percentage_24h;
-  const volMcap = c.total_volume && c.market_cap ? (c.total_volume / c.market_cap) : null;
+  const vol = getVolumeForRatio(c);
+  const volMcap = vol && c.market_cap ? (vol / c.market_cap) : null;
   const h1 = heatColor(chg1h);
   const h24 = heatColor(chg24h);
   let volCell;
@@ -342,12 +352,14 @@ function render(){
   }
   const volDeltas = volumeChangeMap;
 
-  // Panel 1: high vol/mcap
-  const byVolMcap = [...coins].filter(c=>c.total_volume && c.market_cap)
-    .sort((a,b)=> (b.total_volume/b.market_cap) - (a.total_volume/a.market_cap))
-    .slice(0,30);
+  // Panel 1: high vol/mcap, RISING volume only (mutually exclusive with panel 3)
+  const byVolMcap = [...coins]
+    .filter(c => getVolumeForRatio(c) && c.market_cap)
+    .filter(c => typeof volDeltas[c.id] === 'number' && volDeltas[c.id] > 0)
+    .sort((a,b)=> (getVolumeForRatio(b)/b.market_cap) - (getVolumeForRatio(a)/a.market_cap))
+    .slice(0,15);
   document.getElementById('tbl-high-volmcap').innerHTML =
-    byVolMcap.map(c=>rowHtml(c, volDeltas[c.id])).join('') || '<tr><td colspan="6" style="color:var(--text-dim);padding:20px;">Sonuç yok</td></tr>';
+    byVolMcap.map(c=>rowHtml(c, volDeltas[c.id])).join('') || '<tr><td colspan="6" style="color:var(--text-dim);padding:20px;">Hacim verisi hesaplanıyor — birkaç dakika içinde dolacak</td></tr>';
 
   // Panel 2: most volatile (1h abs + 24h abs)
   const byVolatility = [...coins].map(c=>{
@@ -362,11 +374,11 @@ function render(){
     return `<tr><td>${symCell(c)}</td><td class="num" style="background:${bg}">${score.toFixed(2)}</td></tr>`;
   }).join('') || '<tr><td colspan="2" style="color:var(--text-dim);padding:20px;">Sonuç yok</td></tr>';
 
-  // Panel 3: top falling by volume delta
+  // Panel 3: FALLING volume only (mutually exclusive with panel 1)
   const byFallingVolume = [...coins]
-    .filter(c => volDeltas[c.id] !== null && volDeltas[c.id] !== undefined)
+    .filter(c => typeof volDeltas[c.id] === 'number' && volDeltas[c.id] < 0)
     .sort((a,b)=> volDeltas[a.id] - volDeltas[b.id])
-    .slice(0,30);
+    .slice(0,15);
   document.getElementById('tbl-falling-volume').innerHTML =
     byFallingVolume.map(c=>rowHtml(c, volDeltas[c.id])).join('') ||
     '<tr><td colspan="6" style="color:var(--text-dim);padding:20px;">Hacim verisi hesaplanıyor — ilk tarama tamamlanınca burada görünecek (birkaç dakika sürebilir)</td></tr>';
