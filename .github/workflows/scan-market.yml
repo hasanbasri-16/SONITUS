@@ -2,10 +2,12 @@ name: Scan Market Data
 
 on:
   schedule:
-    # GitHub cron is UTC. Every 15 minutes — a full scan takes several minutes
-    # (rate-limit backoffs included), so 5-minute scheduling caused GitHub to
-    # heavily delay/skip runs. 15 minutes gives comfortable headroom.
-    - cron: '*/15 * * * *'
+    # GitHub cron is UTC. Every 5 minutes — now safe because the scan itself
+    # is a single bulk CMC API call (no more per-coin loop), so each run only
+    # takes a few seconds instead of the 13-18 minutes the old Binance/Bybit
+    # per-coin scanning took. That's what caused GitHub to delay/skip runs
+    # before; with a fast run, 5-minute scheduling works fine.
+    - cron: '*/5 * * * *'
   workflow_dispatch: {} # lets you trigger it manually from the Actions tab, useful for testing
 
 # Prevents two scans from running at the same time (which could otherwise
@@ -43,6 +45,8 @@ jobs:
 
       - name: Run market scan
         working-directory: main-checkout
+        env:
+          CMC_API_KEY: ${{ secrets.CMC_API_KEY }}
         run: node scripts/scan-market.js ../data-checkout/data/dashboard-data.json
 
       - name: Commit and push updated data
