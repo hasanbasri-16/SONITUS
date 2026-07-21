@@ -2,12 +2,12 @@ name: Scan Market Data
 
 on:
   schedule:
-    # GitHub cron is UTC. Every 5 minutes — now safe because the scan itself
-    # is a single bulk CMC API call (no more per-coin loop), so each run only
-    # takes a few seconds instead of the 13-18 minutes the old Binance/Bybit
-    # per-coin scanning took. That's what caused GitHub to delay/skip runs
-    # before; with a fast run, 5-minute scheduling works fine.
-    - cron: '*/5 * * * *'
+    # GitHub cron is UTC. Every 10 minutes. The scan itself is a single bulk
+    # CMC API call (fast, seconds not minutes), so this isn't about GitHub's
+    # scheduling delays — it's to stay comfortably within CoinMarketCap's free
+    # tier of 10,000 credits/month. At 1 credit per run: 6 runs/hour * 24 * 30
+    # = ~4,320 credits/month, well under half the budget.
+    - cron: '*/10 * * * *'
   workflow_dispatch: {} # lets you trigger it manually from the Actions tab, useful for testing
 
 # Prevents two scans from running at the same time (which could otherwise
