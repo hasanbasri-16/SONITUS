@@ -172,7 +172,7 @@
       <div class="panel" style="grid-column: span 2;">
         <div class="panel-head">
           <div class="panel-title"><span class="dot"></span>YÜKSELEN HACİMDE VOL/MCAP YÜKSEK VARLIKLAR</div>
-          <div class="panel-desc">Bybit Futures hacmi yükselen varlıklar arasından Vol/Mcap oranı en yüksek olanlar (stabil coinler ve futures'ı olmayanlar hariç)</div>
+          <div class="panel-desc">Hacmi yükselen varlıklar arasından Vol/Mcap oranı en yüksek olanlar (stabil coinler hariç)</div>
           <div class="panel-updated" id="upd-1">güncellendi: az önce</div>
         </div>
         <div class="scroll-body">
@@ -203,7 +203,7 @@
       <div class="panel" style="grid-column: span 2;">
         <div class="panel-head">
           <div class="panel-title alert-title"><span class="dot"></span>HACİMDE EN ÇOK DÜŞENLER</div>
-          <div class="panel-desc">Bybit Futures'ta 24s hacmi en sert düşen varlıklar (stabil coinler ve futures'ı olmayanlar hariç, bkz. dipnot)</div>
+          <div class="panel-desc">24s hacmi en sert düşen varlıklar (stabil coinler hariç, bkz. dipnot)</div>
           <div class="panel-updated" id="upd-3">güncellendi: az önce</div>
         </div>
         <div class="scroll-body">
@@ -236,9 +236,9 @@
 </main>
 
 <footer>
-  * Hacim ile ilgili tüm veriler (Vol/Mcap oranı ve Hacim Δ) Bybit Futures'tan (USDT Perpetual) geliyor — spot veriyle karıştırılmıyor, bu yüzden tablodaki tüm satırlar birbiriyle tutarlı şekilde karşılaştırılabilir. Bybit'te futures piyasası olmayan coinler bu iki panelde hiç görünmez (yanıltıcı bir spot fallback göstermek yerine). "Yükselen Hacimde" ve "Hacimde En Çok Düşenler" panelleri birbirini dışlar: bir coin ikisinde birden görünmez. Fiyat/piyasa değeri verisi hâlâ CoinGecko'dan.<br>
+  * Hacim ile ilgili tüm veriler (Vol/Mcap oranı ve Hacim Δ) CoinMarketCap'ten tek bir istekte, aynı anda geliyor — fiyat/piyasa değeriyle aynı kaynak, birbirini karıştırmıyor. "Yükselen Hacimde" ve "Hacimde En Çok Düşenler" panelleri birbirini dışlar: bir coin ikisinde birden görünmez.<br>
   Bu veri, GitHub Actions üzerinde her ~15 dakikada bir çalışan ücretsiz bir cron görevi tarafından hesaplanıp bu reponun "data" branch'ine yazılıyor — sen sadece hazır sonucu okuyorsun.<br>
-  Veri kaynağı: CoinGecko (prototip) → CoinMarketCap (key eklenince) · Yatırım tavsiyesi değildir.
+  Veri kaynağı: CoinMarketCap (fiyat, piyasa değeri, hacim) + CoinGecko (kategoriler) · Yatırım tavsiyesi değildir.
 </footer>
 
 <script>
@@ -301,12 +301,12 @@ function symCell(c){
   return `<span class="sym-cell"><img src="${c.image}" alt=""><span>${c.symbol.toUpperCase()}</span></span>`;
 }
 
-// Volume metrics are Bybit-Futures-only now (see scan-market.js) — no spot
-// fallback, so every number in these panels comes from the same source and is
-// genuinely comparable. Coins with no Bybit futures market simply won't
-// have this value and are excluded from the volume-based panels.
+// Volume data now comes from CoinMarketCap's listings/latest — a single bulk
+// call that returns volume_24h (used here) AND volume_change_24h (used for
+// Hacim Δ) together, so there's no more mixing of sources and no per-coin
+// scanning delay.
 function getVolumeForRatio(c){
-  return (c.futures_volume_24h && c.futures_volume_24h > 0) ? c.futures_volume_24h : null;
+  return (c.total_volume && c.total_volume > 0) ? c.total_volume : null;
 }
 
 function rowHtml(c, volDelta){
