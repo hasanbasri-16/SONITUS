@@ -47,6 +47,9 @@ jobs:
         working-directory: main-checkout
         env:
           CMC_API_KEY: ${{ secrets.CMC_API_KEY }}
+          # Manual runs (workflow_dispatch) always force a fresh OI read;
+          # scheduled runs still respect the 1-hour cooldown in the script.
+          FORCE_OI_REFRESH: ${{ github.event_name == 'workflow_dispatch' }}
         run: node scripts/scan-market.js ../data-checkout/data/dashboard-data.json
 
       - name: Commit and push updated data
