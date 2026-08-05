@@ -107,17 +107,25 @@ async function main() {
   }
 
   // ---- DIAGNOSTIC ONLY: testing whether Open Interest is accessible on our
-  // CMC plan. Not wired into the output yet — just logging what we get back
-  // so we can decide the real implementation next. Safe to remove later.
+  // CMC plan, and how many credits it costs. Not wired into the output yet.
   try {
     const testIds = '1'; // Bitcoin — just testing single-id access first
     const oiUrl = `https://pro-api.coinmarketcap.com/v5/cryptocurrency/derivatives/market-pairs/list/latest?crypto_id=${testIds}`;
     console.log('--- OI TEST: requesting', oiUrl);
     const oiRes = await fetchWithTimeout(oiUrl, REQUEST_TIMEOUT_MS, { 'X-CMC_PRO_API_KEY': CMC_API_KEY });
     console.log('--- OI TEST: HTTP status', oiRes.status);
-    const oiBody = await oiRes.text();
-    console.log('--- OI TEST: response body (first 1500 chars):');
-    console.log(oiBody.slice(0, 1500));
+    const oiJson = await oiRes.json();
+    console.log('--- OI TEST: credit_count for this ONE call =', oiJson.status && oiJson.status.credit_count);
+    console.log('--- OI TEST: num_market_pairs =', oiJson.data && oiJson.data.num_market_pairs);
+    // sum open_interest across all market pairs to see what a "total OI" would look like
+    if (oiJson.data && Array.isArray(oiJson.data.market_pairs)) {
+      let totalOI = 0;
+      for (const pair of oiJson.data.market_pairs) {
+        const oi = pair.quotes && pair.quotes[0] && pair.quotes[0].open_interest;
+        if (typeof oi === 'number') totalOI += oi;
+      }
+      console.log('--- OI TEST: summed total_open_interest (USD) =', totalOI);
+    }
   } catch (e) {
     console.log('--- OI TEST: request failed:', e.message);
   }
