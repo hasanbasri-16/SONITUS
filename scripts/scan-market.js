@@ -31,10 +31,21 @@ const path = require('path');
 
 const TRACK_COUNT = 200; // coins per CMC listings/latest call
 const REQUEST_TIMEOUT_MS = 15000;
+const OI_COIN_COUNT = 5;              // how many coins get Open Interest tracking
+const OI_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // only refresh OI once per hour, regardless of how often this script runs (credit budget)
+
+// Same stablecoin exclusion as the frontend — no point tracking OI for these.
+const STABLECOIN_SYMBOLS = new Set([
+  'usdt','usdc','usd1','dai','tusd','fdusd','usdd','usdp','gusd','lusd','usde',
+  'pyusd','rlusd','usdg','eurs','eurt','susd','frax','crvusd','busd','usdk',
+  'alusd','mim','ustc','dola','usdx','xusd','cusd','usdy','usr','usda','usdb'
+]);
 
 const CMC_API_KEY = process.env.CMC_API_KEY;
 const CMC_LISTINGS_URL =
   `https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?start=1&limit=${TRACK_COUNT}&convert=USD&sort=market_cap`;
+const CMC_OI_URL = (cryptoId) =>
+  `https://pro-api.coinmarketcap.com/v5/cryptocurrency/derivatives/market-pairs/list/latest?crypto_id=${cryptoId}`;
 const CATEGORIES_URL = 'https://api.coingecko.com/api/v3/coins/categories?order=market_cap_change_24h_desc';
 
 const outputPath = process.argv[2];
@@ -62,6 +73,41 @@ function loadExisting(outputPath) {
   } catch (e) {
     return null;
   }
+}
+
+// Fetches Open Interest for one coin and sums it across all its market pairs
+// (CMC reports OI per exchange/pair, not a single aggregate). Costs 1 CMC
+// credit per call — see OI_COIN_COUNT / OI_REFRESH_INTERVAL_MS above for how
+// we keep that affordable.
+async function fetchOpenInterest(cryptoId) {
+  const res = await fetchWithTimeout(CMC_OI_URL(cryptoId), REQUEST_TIMEOUT_MS, {
+    'X-CMC_PRO_API_KEY': CMC_API_KEY
+  });
+  if (!res.ok) throw new Error('HTTP_' + res.status);
+  const json = await res.json();
+  const pairs = json.data && json.data.market_pairs;
+  if (!Array.isArray(pairs)) return null;
+  let totalOI = 0;
+  let counted = 0;
+  for (const pair of pairs) {
+    const oi = pair.quotes && pair.quotes[0] && pair.quotes[0].open_interest;
+    if (typeof oi === 'number' && !isNaN(oi)) { totalOI += oi; counted++; }
+  }
+  if (counted === 0) return null;
+  return { totalOI, marketPairCount: pairs.length };
+}
+
+// Turns (OI direction, price direction) into a plain-language read on
+// whether longs/shorts are opening or closing — the classic 4-quadrant
+// open-interest-vs-price framework.
+function interpretOI(oiChangePct, priceChangePct) {
+  if (oiChangePct === null || priceChangePct === null || oiChangePct === undefined || priceChangePct === undefined) return null;
+  const oiUp = oiChangePct > 0;
+  const priceUp = priceChangePct > 0;
+  if (oiUp && priceUp) return 'longs_opening';
+  if (oiUp && !priceUp) return 'shorts_opening';
+  if (!oiUp && priceUp) return 'shorts_closing';
+  return 'longs_closing';
 }
 
 // Maps a CMC listing entry to the shape the frontend expects (kept close to
@@ -106,30 +152,56 @@ async function main() {
     console.log(`CMC credits used this call: ${json.status.credit_count}`);
   }
 
-  // ---- DIAGNOSTIC ONLY: testing whether Open Interest is accessible on our
-  // CMC plan, and how many credits it costs. Not wired into the output yet.
-  try {
-    const testIds = '1'; // Bitcoin — just testing single-id access first
-    const oiUrl = `https://pro-api.coinmarketcap.com/v5/cryptocurrency/derivatives/market-pairs/list/latest?crypto_id=${testIds}`;
-    console.log('--- OI TEST: requesting', oiUrl);
-    const oiRes = await fetchWithTimeout(oiUrl, REQUEST_TIMEOUT_MS, { 'X-CMC_PRO_API_KEY': CMC_API_KEY });
-    console.log('--- OI TEST: HTTP status', oiRes.status);
-    const oiJson = await oiRes.json();
-    console.log('--- OI TEST: credit_count for this ONE call =', oiJson.status && oiJson.status.credit_count);
-    console.log('--- OI TEST: num_market_pairs =', oiJson.data && oiJson.data.num_market_pairs);
-    // sum open_interest across all market pairs to see what a "total OI" would look like
-    if (oiJson.data && Array.isArray(oiJson.data.market_pairs)) {
-      let totalOI = 0;
-      for (const pair of oiJson.data.market_pairs) {
-        const oi = pair.quotes && pair.quotes[0] && pair.quotes[0].open_interest;
-        if (typeof oi === 'number') totalOI += oi;
+  // ---- Open Interest: only for the top OI_COIN_COUNT coins by volume
+  // (stablecoins excluded), and only refreshed once per OI_REFRESH_INTERVAL_MS
+  // — regardless of how often this whole script runs (every 10 min) or gets
+  // manually triggered. If a manual run happens to land after the cooldown
+  // has expired, it refreshes; otherwise it just carries the previous values
+  // forward, so credits aren't wasted on redundant OI calls.
+  let oiMap = (existing && existing.openInterest) || {};
+  let oiUpdatedAt = (existing && existing.oiUpdatedAt) || null;
+  const forceRefresh = process.env.FORCE_OI_REFRESH === 'true';
+  const oiIsStale = forceRefresh || !oiUpdatedAt || (Date.now() - new Date(oiUpdatedAt).getTime()) > OI_REFRESH_INTERVAL_MS;
+
+  if (oiIsStale) {
+    if (forceRefresh) console.log('FORCE_OI_REFRESH is set (manual run) — refreshing OI regardless of cooldown.');
+    const topByVolume = [...coins]
+      .filter(c => !STABLECOIN_SYMBOLS.has(c.symbol))
+      .filter(c => c.total_volume)
+      .sort((a, b) => b.total_volume - a.total_volume)
+      .slice(0, OI_COIN_COUNT);
+
+    console.log(`OI data is stale (or missing) — refreshing for top ${topByVolume.length} coins by volume:`,
+      topByVolume.map(c => c.symbol.toUpperCase()).join(', '));
+
+    const newOiMap = {};
+    for (const c of topByVolume) {
+      try {
+        const result = await fetchOpenInterest(c.cmc_id);
+        if (!result) { console.warn(`No OI data for ${c.symbol}`); continue; }
+        const prevEntry = oiMap[c.id];
+        const oiChangePct = (prevEntry && prevEntry.totalOI)
+          ? ((result.totalOI - prevEntry.totalOI) / prevEntry.totalOI) * 100
+          : null;
+        const priceChangePct = c.price_change_percentage_1h_in_currency;
+        newOiMap[c.id] = {
+          totalOI: result.totalOI,
+          marketPairCount: result.marketPairCount,
+          oiChangePct,
+          sentiment: interpretOI(oiChangePct, priceChangePct),
+          updatedAt: new Date().toISOString()
+        };
+        console.log(`  ${c.symbol.toUpperCase()}: OI=$${Math.round(result.totalOI).toLocaleString()} (${result.marketPairCount} pairs)${oiChangePct !== null ? ', Δ=' + oiChangePct.toFixed(2) + '%' : ' (first reading)'}`);
+      } catch (e) {
+        console.warn(`OI fetch failed for ${c.symbol}:`, e.message);
+        if (oiMap[c.id]) newOiMap[c.id] = oiMap[c.id]; // keep stale value rather than dropping it
       }
-      console.log('--- OI TEST: summed total_open_interest (USD) =', totalOI);
     }
-  } catch (e) {
-    console.log('--- OI TEST: request failed:', e.message);
+    oiMap = newOiMap;
+    oiUpdatedAt = new Date().toISOString();
+  } else {
+    console.log(`OI data is still fresh (last updated ${oiUpdatedAt}), skipping to save credits.`);
   }
-  // ---- END DIAGNOSTIC ----
 
   console.log('Fetching categories from CoinGecko...');
   let categories = (existing && existing.categories) || [];
@@ -162,7 +234,9 @@ async function main() {
     volumeHistory: volumeMap,
     volumeUpdatedAt: new Date().toISOString(),
     categories,
-    categoriesUpdatedAt: new Date().toISOString()
+    categoriesUpdatedAt: new Date().toISOString(),
+    openInterest: oiMap,
+    oiUpdatedAt
   };
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
