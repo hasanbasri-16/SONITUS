@@ -231,6 +231,23 @@
         </div>
       </div>
 
+      <div class="panel" style="grid-column: span 2;">
+        <div class="panel-head">
+          <div class="panel-title"><span class="dot"></span>OPEN INTEREST — LONG/SHORT SİNYALİ</div>
+          <div class="panel-desc">En yüksek hacimli 5 coin'de açık pozisyon (OI) değişimi ve yönü — saatlik güncellenir</div>
+          <div class="panel-updated" id="upd-5">güncellendi: az önce</div>
+        </div>
+        <div class="scroll-body">
+          <table>
+            <thead><tr>
+              <th>Sembol</th><th class="num">Toplam OI</th><th class="num">OI Değişimi</th>
+              <th class="num">1s Fiyat</th><th>Yorum</th>
+            </tr></thead>
+            <tbody id="tbl-open-interest"></tbody>
+          </table>
+        </div>
+      </div>
+
     </div>
   </div>
 </main>
@@ -238,7 +255,8 @@
 <footer>
   * Hacim ile ilgili tüm veriler (Vol/Mcap oranı ve Hacim Δ) CoinMarketCap'ten tek bir istekte, aynı anda geliyor — fiyat/piyasa değeriyle aynı kaynak, birbirini karıştırmıyor. "Yükselen Hacimde" ve "Hacimde En Çok Düşenler" panelleri birbirini dışlar: bir coin ikisinde birden görünmez.<br>
   Bu veri, GitHub Actions üzerinde her ~15 dakikada bir çalışan ücretsiz bir cron görevi tarafından hesaplanıp bu reponun "data" branch'ine yazılıyor — sen sadece hazır sonucu okuyorsun.<br>
-  Veri kaynağı: CoinMarketCap (fiyat, piyasa değeri, hacim) + CoinGecko (kategoriler) · Yatırım tavsiyesi değildir.
+  Open Interest: kredi bütçesi nedeniyle sadece en yüksek hacimli 5 coin için, saatte bir güncellenir. Yorum sütunu, OI ve fiyat yönünü birlikte değerlendiren standart bir çerçeveye dayanır (OI↑+fiyat↑ = long açılıyor, OI↑+fiyat↓ = short açılıyor, OI↓+fiyat↑ = short kapanıyor, OI↓+fiyat↓ = long kapanıyor) — kesin bir sinyal değil, yorumlama yardımcısıdır.<br>
+  Veri kaynağı: CoinMarketCap (fiyat, piyasa değeri, hacim, open interest) + CoinGecko (kategoriler) · Yatırım tavsiyesi değildir.
 </footer>
 
 <script>
@@ -402,6 +420,44 @@ function renderCategories(categories){
   }).join('') || '<tr><td colspan="2" style="color:var(--text-dim);padding:16px;">Kategori verisi şu an alınamadı</td></tr>';
 }
 
+const OI_SENTIMENT_LABELS = {
+  longs_opening:  { text: 'Longlar Açılıyor',   bg: 'rgba(0,255,156,0.15)',  color: 'var(--signal)' },
+  shorts_opening: { text: 'Shortlar Açılıyor',  bg: 'rgba(255,92,77,0.15)',  color: 'var(--alert)' },
+  shorts_closing: { text: 'Shortlar Kapanıyor', bg: 'rgba(0,255,156,0.10)',  color: 'var(--signal)' },
+  longs_closing:  { text: 'Longlar Kapanıyor',  bg: 'rgba(255,92,77,0.10)',  color: 'var(--alert)' }
+};
+
+function renderOpenInterest(openInterest){
+  const coinsById = {};
+  allCoins.forEach(c => { coinsById[c.id] = c; });
+  const entries = Object.keys(openInterest || {})
+    .map(id => ({ id, coin: coinsById[id], oi: openInterest[id] }))
+    .filter(e => e.coin);
+
+  if(entries.length === 0){
+    document.getElementById('tbl-open-interest').innerHTML =
+      '<tr><td colspan="5" style="color:var(--text-dim);padding:20px;">OI verisi henüz toplanmadı — ilk saatlik tarama tamamlanınca burada görünecek</td></tr>';
+    return;
+  }
+
+  document.getElementById('tbl-open-interest').innerHTML = entries.map(({coin, oi})=>{
+    const priceChg = coin.price_change_percentage_1h_in_currency;
+    const priceH = heatColor(priceChg);
+    const oiH = heatColor(oi.oiChangePct, 15, -15);
+    const sentiment = OI_SENTIMENT_LABELS[oi.sentiment];
+    const sentimentCell = sentiment
+      ? `<span style="padding:3px 9px;border-radius:5px;font-weight:700;font-size:11.5px;background:${sentiment.bg};color:${sentiment.color};">${sentiment.text}</span>`
+      : '<span style="color:var(--text-dim);">ilk okuma</span>';
+    return `<tr>
+      <td>${symCell(coin)}</td>
+      <td class="num">${fmtCompact(oi.totalOI)}</td>
+      <td class="num" style="background:${oiH.bg}">${oi.oiChangePct === null || oi.oiChangePct === undefined ? '—' : fmtChange(oi.oiChangePct)}</td>
+      <td class="num" style="background:${priceH.bg}">${fmtChange(priceChg)}</td>
+      <td>${sentimentCell}</td>
+    </tr>`;
+  }).join('');
+}
+
 async function loadDashboard(){
   const errorBox = document.getElementById('error-box');
   errorBox.style.display = 'none';
@@ -419,6 +475,7 @@ async function loadDashboard(){
 
     render();
     renderCategories(data.categories || []);
+    renderOpenInterest(data.openInterest || {});
 
     document.getElementById('loading-screen').style.display = 'none';
     document.getElementById('dashboard-content').style.display = 'block';
@@ -428,11 +485,13 @@ async function loadDashboard(){
     const marketAge = data.marketUpdatedAt ? new Date(data.marketUpdatedAt).toLocaleTimeString('tr-TR') : now.toLocaleTimeString('tr-TR');
     const volAge = data.volumeUpdatedAt ? new Date(data.volumeUpdatedAt).toLocaleTimeString('tr-TR') : '—';
     const catAge = data.categoriesUpdatedAt ? new Date(data.categoriesUpdatedAt).toLocaleTimeString('tr-TR') : '—';
+    const oiAge = data.oiUpdatedAt ? new Date(data.oiUpdatedAt).toLocaleTimeString('tr-TR') : '—';
     document.getElementById('last-update').textContent = now.toLocaleTimeString('tr-TR');
     document.getElementById('upd-1').textContent = 'fiyat: ' + marketAge + ' · hacim taraması: ' + volAge;
     document.getElementById('upd-2').textContent = 'güncellendi: ' + marketAge;
     document.getElementById('upd-3').textContent = 'fiyat: ' + marketAge + ' · hacim taraması: ' + volAge;
     document.getElementById('upd-4').textContent = 'güncellendi: ' + catAge;
+    document.getElementById('upd-5').textContent = 'güncellendi: ' + oiAge + ' (saatlik yenilenir)';
   }catch(err){
     document.getElementById('loading-screen').style.display = 'none';
     document.getElementById('dashboard-content').style.display = 'block';
