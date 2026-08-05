@@ -110,7 +110,7 @@ async function main() {
   // CMC plan. Not wired into the output yet — just logging what we get back
   // so we can decide the real implementation next. Safe to remove later.
   try {
-    const testIds = coins.slice(0, 5).map(c => c.cmc_id).join(',');
+    const testIds = '1'; // Bitcoin — just testing single-id access first
     const oiUrl = `https://pro-api.coinmarketcap.com/v5/cryptocurrency/derivatives/market-pairs/list/latest?crypto_id=${testIds}`;
     console.log('--- OI TEST: requesting', oiUrl);
     const oiRes = await fetchWithTimeout(oiUrl, REQUEST_TIMEOUT_MS, { 'X-CMC_PRO_API_KEY': CMC_API_KEY });
