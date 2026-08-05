@@ -111,7 +111,7 @@ async function main() {
   // so we can decide the real implementation next. Safe to remove later.
   try {
     const testIds = coins.slice(0, 5).map(c => c.cmc_id).join(',');
-    const oiUrl = `https://pro-api.coinmarketcap.com/v5/cryptocurrency/derivatives/market-pairs/list/latest?id=${testIds}`;
+    const oiUrl = `https://pro-api.coinmarketcap.com/v5/cryptocurrency/derivatives/market-pairs/list/latest?crypto_id=${testIds}`;
     console.log('--- OI TEST: requesting', oiUrl);
     const oiRes = await fetchWithTimeout(oiUrl, REQUEST_TIMEOUT_MS, { 'X-CMC_PRO_API_KEY': CMC_API_KEY });
     console.log('--- OI TEST: HTTP status', oiRes.status);
