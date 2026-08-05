@@ -106,6 +106,23 @@ async function main() {
     console.log(`CMC credits used this call: ${json.status.credit_count}`);
   }
 
+  // ---- DIAGNOSTIC ONLY: testing whether Open Interest is accessible on our
+  // CMC plan. Not wired into the output yet — just logging what we get back
+  // so we can decide the real implementation next. Safe to remove later.
+  try {
+    const testIds = coins.slice(0, 5).map(c => c.cmc_id).join(',');
+    const oiUrl = `https://pro-api.coinmarketcap.com/v5/cryptocurrency/derivatives/market-pairs/list/latest?id=${testIds}`;
+    console.log('--- OI TEST: requesting', oiUrl);
+    const oiRes = await fetchWithTimeout(oiUrl, REQUEST_TIMEOUT_MS, { 'X-CMC_PRO_API_KEY': CMC_API_KEY });
+    console.log('--- OI TEST: HTTP status', oiRes.status);
+    const oiBody = await oiRes.text();
+    console.log('--- OI TEST: response body (first 1500 chars):');
+    console.log(oiBody.slice(0, 1500));
+  } catch (e) {
+    console.log('--- OI TEST: request failed:', e.message);
+  }
+  // ---- END DIAGNOSTIC ----
+
   console.log('Fetching categories from CoinGecko...');
   let categories = (existing && existing.categories) || [];
   try {
